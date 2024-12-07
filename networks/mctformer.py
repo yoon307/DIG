@@ -125,8 +125,8 @@ class LFCA2(nn.Module):
         self.norm_c1 = nn.LayerNorm(self.D,eps=eps)
 
         self.key =  nn.Conv2d(self.D_f,self.D,1,1,0)
-        # self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0)
-        self.value =  nn.Conv2d(self.D_f,self.D_f,3,1,1)
+        self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0)
+        # self.value =  nn.Conv2d(self.D_f,self.D_f,3,1,1)
 
         self.mlp_c0 = nn.Linear(self.D_f,self.D)
         self.mlp_p0 = nn.Conv2d(self.D_f,self.D_f,3,1,1)
@@ -134,13 +134,11 @@ class LFCA2(nn.Module):
         self.mlp_c1 = nn.Sequential(
             nn.Linear(self.D,self.D*4),
             nn.GELU(),
-            # nn.ReLU(inplace=True),
             nn.Linear(self.D*4,self.D),
             )
         self.mlp_p1 = nn.Sequential(
             nn.Conv2d(self.D_f,self.D_f*4,3,1,1),
             nn.GELU(),
-            # nn.ReLU(inplace=True),
             # nn.Dropout(0.1),
             nn.Conv2d(self.D_f*4,self.D_f,1,1,0),
             # nn.Dropout(0.1)
@@ -205,7 +203,7 @@ class LFCA2(nn.Module):
         # cross_attn = torch.matmul(query_vit, key_diff.transpose(-2, -1)) / ((384) ** 0.5)
 
         cross_attn = F.softmax(cross_attn, dim=-1)
-        # weight = cross_attn
+        weight = cross_attn
         # cross_attn = self.attn_drop(cross_attn)
         o = torch.matmul(cross_attn, value_diff)  # [batch_size, num_heads, query_len, head_dim]
    
@@ -221,6 +219,7 @@ class LFCA2(nn.Module):
         # pdb.set_trace()
         o_p = F.relu(self.mlp_p0(o_p),inplace=True)
         o_p = F.interpolate(o_p,size=(h_diff,w_diff),mode='bilinear',align_corners=False) #align False better
+        
         x_p = kv + self.drop_path(o_p)
         x_p = self.drop_path(F.relu(self.mlp_p1(self.norm_p1(x_p)),inplace=True)) + x_p
         # x_p = self.drop_path(F.relu(self.mlp_p1(x_p),inplace=True)) + x_p
