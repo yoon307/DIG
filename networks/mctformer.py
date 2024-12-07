@@ -113,15 +113,19 @@ class LFCA2(nn.Module):
 
         num_group = 1
 
+        eps = 1e-5
+
         self.diff_init = ResBlock_ysh(self.D_f*5,self.D_f)
 
-        self.norm_k = nn.LayerNorm(self.D,eps=1e-6)
-        self.norm_v = nn.LayerNorm(self.D_f,eps=1e-6)
+        self.norm_k = nn.LayerNorm(self.D,eps=eps)
+        self.norm_v = nn.LayerNorm(self.D_f,eps=eps)
+        # self.norm_kv = nn.LayerNorm(self.D_f)
 
-        self.norm_p1 = nn.GroupNorm(num_group,self.D_f,eps=1e-6)
-        self.norm_c1 = nn.LayerNorm(self.D,eps=1e-6)
+        self.norm_p1 = nn.GroupNorm(num_group,self.D_f,eps=eps)
+        self.norm_c1 = nn.LayerNorm(self.D,eps=eps)
 
         self.key =  nn.Conv2d(self.D_f,self.D,1,1,0)
+        # self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0)
         self.value =  nn.Conv2d(self.D_f,self.D_f,3,1,1)
 
         self.mlp_c0 = nn.Linear(self.D_f,self.D)
@@ -130,18 +134,20 @@ class LFCA2(nn.Module):
         self.mlp_c1 = nn.Sequential(
             nn.Linear(self.D,self.D*4),
             nn.GELU(),
+            # nn.ReLU(inplace=True),
             nn.Linear(self.D*4,self.D),
             )
         self.mlp_p1 = nn.Sequential(
             nn.Conv2d(self.D_f,self.D_f*4,3,1,1),
             nn.GELU(),
+            # nn.ReLU(inplace=True),
             # nn.Dropout(0.1),
             nn.Conv2d(self.D_f*4,self.D_f,1,1,0),
             # nn.Dropout(0.1)
             )
 
-        # self.drop_path = DropPath(0.1)
-        self.drop_path = DropPath(0.)
+        self.drop_path = DropPath(0.1)
+        # self.drop_path = DropPath(0.)
         self.attn_drop = nn.Dropout(0.1)
         self.drop = nn.Dropout(0.1)
 
@@ -166,6 +172,8 @@ class LFCA2(nn.Module):
         # torch.manual_seed(0)
         nn.init.xavier_uniform_(self.key.weight)
         nn.init.xavier_uniform_(self.value.weight)
+        trunc_normal_(self.key.weight, std=.02)
+        trunc_normal_(self.value.weight, std=.02)
 
 
     
@@ -177,12 +185,13 @@ class LFCA2(nn.Module):
         h_trm, w_trm = int(N ** 0.5), int(N ** 0.5)
 
         kv = self.diff_init(feat_diff_cat) #B D_f H W
+        # _kv = self.norm_kv(kv.view(B,self.D_f,-1).permute(0,2,1)).permute(0,2,1).view(B,self.D_f,h_diff,w_diff) # B N D_f
 
         #Cross-attention
         key_diff = self.norm_k(self.key(kv).view(B,self.D,-1).permute(0,2,1)) #B D_f H' W' -> B N_f D
         value_diff = self.norm_v(self.value(kv).view(B,self.D_f,-1).permute(0,2,1)) #B D_f H' W' -> B N_f D_f
-        # key_diff = self.norm_k(self.key(kv)).view(B,self.D,-1).permute(0,2,1) #B D_f H' W' -> B N_f D
-        # value_diff = self.norm_v(self.value(kv)).view(B,self.D_f,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
+        # key_diff = self.key(_kv).view(B,self.D,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
+        # value_diff = self.value(_kv).view(B,self.D_f,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
 
         query_vit = query_vit.view(query_vit.shape[0], query_vit.shape[1], 8, 384 // 8)
         key_diff = key_diff.view(key_diff.shape[0], key_diff.shape[1], 8, 384 // 8)
@@ -196,7 +205,7 @@ class LFCA2(nn.Module):
         # cross_attn = torch.matmul(query_vit, key_diff.transpose(-2, -1)) / ((384) ** 0.5)
 
         cross_attn = F.softmax(cross_attn, dim=-1)
-        weight = cross_attn
+        # weight = cross_attn
         # cross_attn = self.attn_drop(cross_attn)
         o = torch.matmul(cross_attn, value_diff)  # [batch_size, num_heads, query_len, head_dim]
    
@@ -206,17 +215,18 @@ class LFCA2(nn.Module):
         o_p = o[:, self.C:, :].permute(0,2,1).reshape(B,self.D_f,h_trm,w_trm) # B N D_f -> B D_f H W
 
         o_c = self.mlp_c0(o_c)
-        x_c = o_c + query_vit_input[:,:self.C,:]
+        x_c = o_c #+ query_vit_input[:,:self.C,:]
         x_c = self.mlp_c1(self.norm_c1(x_c)) + x_c
 
+        # pdb.set_trace()
         o_p = F.relu(self.mlp_p0(o_p),inplace=True)
         o_p = F.interpolate(o_p,size=(h_diff,w_diff),mode='bilinear',align_corners=False) #align False better
-        # o_p = F.interpolate(o_p,size=(h_diff,w_diff),mode='bilinear',align_corners=True) 
         x_p = kv + self.drop_path(o_p)
-        # x_p = self.drop_path(F.relu(self.mlp_p1(self.norm_p1(x_p)),inplace=True)) + x_p
-        x_p = self.drop_path(F.relu(self.mlp_p1(x_p),inplace=True)) + x_p
+        x_p = self.drop_path(F.relu(self.mlp_p1(self.norm_p1(x_p)),inplace=True)) + x_p
+        # x_p = self.drop_path(F.relu(self.mlp_p1(x_p),inplace=True)) + x_p
+        # print(x_p.max(),x_p.min())
 
-        return x_c, x_p, weight.sum(1)[:,:self.C,:].reshape(B,self.C,h_diff,w_diff)
+        return x_c, x_p #, weight.sum(1)[:,:self.C,:].reshape(B,self.C,h_diff,w_diff)
         # return x_c, x_p, weight[:,:self.C,:].reshape(B,self.C,h_diff,w_diff)
     
 class LFCA(nn.Module):
@@ -229,7 +239,7 @@ class LFCA(nn.Module):
 
         self.diff_init = ResBlock_ysh(self.D_f*5,self.D_f)         # ReLU(2 ConvLNReLU + 1x1 Conv)
         # self.diff_init = ResBlock_ysh(self.D_f,self.D_f)         # ReLU(2 ConvLNReLU + 1x1 Conv)
-        self.lnorm = nn.GroupNorm(1,self.D_f,eps=1e-6)
+        self.lnorm = nn.GroupNorm(1,self.D_f,eps=1e-5)
         self.key =  nn.Conv2d(self.D_f,self.D,1,1,0) #nn.Conv2d(self.D_f,self.D,1,1,0,bias=False)
         self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0) #nn.Conv2d(self.D_f,self.D_f,1,1,0,bias=False) #
         self.diff_head0 = nn.Conv2d(self.D_f,self.D_f,3,1,1) # attn2-base
@@ -298,13 +308,16 @@ class MCTformerV2_DiG(VisionTransformer):
             # self.LFCA2 = LFCA2(self.D,self.D_f,self.num_classes)
 
 
-            self.diff_head_p = nn.Sequential(DiffBlock_ysh(self.D_f,self.D_f),nn.Conv2d(self.D_f,20,1,1,0,bias=False))
+            self.diff_head_p = nn.Sequential(DiffBlock_ysh(self.D_f,self.D_f),nn.Conv2d(self.D_f,20,1,1,0))
             # self.diff_head_p = nn.Sequential(nn.Conv2d(self.D_f*2,self.D_f*2,1,1,0,bias=False),nn.Conv2d(self.D_f*2,20,1,1,0,bias=False))
             
             # self.diff_head_c = nn.Linear(self.D,self.D)
 
         trunc_normal_(self.cls_token, std=.02)
         trunc_normal_(self.pos_embed, std=.02)
+        # prior_prob = 0.01
+        # bias_value = -math.log((1 - prior_prob) / prior_prob)
+        # self.diff_head_p[1].bias.data = torch.ones(self.num_classes) * bias_value
         # nn.init.kaiming_normal_(self.diff_head_p[1].weight, mode='fan_in', nonlinearity='relu')
         print(self.training)
 
@@ -395,15 +408,15 @@ class MCTformerV2_DiG(VisionTransformer):
             query0 = q_stacked[-1].permute(0,2,1,3).reshape(n,-1,384).detach() #B H N+C D//head -> B C+N D
             query1 = q_stacked[-2].permute(0,2,1,3).reshape(n,-1,384).detach() #B H N+C D//head -> B C+N D
      
-            out_cross_c0, out_cross_p0 , cattn0 = self.LFCA0(query0,feat_diff_cat)
-            out_cross_c1, out_cross_p1 , cattn1= self.LFCA1(query1,feat_diff_cat)
-            # out_cross_c2, out_cross_p2 , cattn2 = self.LFCA2(query2,feat_diff_cat)
-
+            # out_cross_c0, out_cross_p0 , cattn0 = self.LFCA0(query0,feat_diff_cat)
+            # out_cross_c1, out_cross_p1 , cattn1= self.LFCA1(query1,feat_diff_cat)
+            out_cross_c0, out_cross_p0  = self.LFCA0(query0,feat_diff_cat)
+            out_cross_c1, out_cross_p1 = self.LFCA1(query1,feat_diff_cat)
 
             out_cross_c = (out_cross_c0 + out_cross_c1)/2 #BEST
             out_cross_p = (out_cross_p0 + out_cross_p1)/2
             # out_cross_p = torch.cat([out_cross_p0,out_cross_p1],dim=1)
-            cattn = (cattn0+cattn1)/2
+            # cattn = (cattn0+cattn1)/2
 
             # out_cross_c = (out_cross_c0 + out_cross_c1 + out_cross_c2)/3 #BEST
             # out_cross_p = (out_cross_p0 + out_cross_p1 + out_cross_p2)/3
@@ -470,7 +483,7 @@ class MCTformerV2_DiG(VisionTransformer):
 
         if feat_diff != None:
             # outs['feat_diff'] = feat_diff_sum
-            outs['cattn_diff'] = cattn
+            # outs['cattn_diff'] = cattn
             outs['cam_diff'] = cam_diff_out
             outs['diff_cls'] = diff_cls_logits
             outs['diff_pcls'] = diff_patch_logits

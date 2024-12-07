@@ -300,7 +300,7 @@ class model_WSSS():
         self.img_norm = self.diffusion.normalize(self.img_norm) # -1 ~ +1
 
         #################diffusion process###############
-        SFI = 60 #Step for image
+        SFI = 100 #Step for image
 
         feat_diff_list = []
         if (self.args.W[1]>0 or self.args.W[2]>0) or self.args.W[3]>0:
@@ -356,7 +356,7 @@ class model_WSSS():
 
         self.feat = outputs['feat']
         if feat_diff_list is not None:
-            self.cattn_diff = outputs['cattn_diff']
+            # self.cattn_diff = outputs['cattn_diff']
             self.cam_diff = outputs['cam_diff']
             self.diff_cls = outputs['diff_cls']
             self.diff_pcls = outputs['diff_pcls']           # B C
@@ -402,14 +402,14 @@ class model_WSSS():
         else:
             self.loss_pred_diff = torch.Tensor([0])
 
-        if self.args.W[2]>0:
+        if self.args.W[2]>0 and epo>lfca_epoch:
             _cams = self.max_norm(F.interpolate(cams,size=self.cam_diff.size()[2:],mode='bilinear',align_corners=False))
             
             _cam_diff = self.max_norm(self.cam_diff)*self.label.view(B,C,1,1)
             # _cam_diff = (self.max_norm(self.cam_diff*self.cattn_diff))*self.label.view(B,C,1,1)
 
             ###############################################
-            if False:
+            if True:
                 input = denorm(self.img[0]).permute(1,2,0)
                 cam_diff = F.interpolate(self.cam_diff,size=(H,W),mode='bilinear',align_corners=False)*self.label.view(B,C,1,1)
                 # cattn_diff = F.interpolate(self.cattn_diff,size=(H,W),mode='bilinear',align_corners=False)*self.label.view(B,C,1,1)
@@ -427,11 +427,11 @@ class model_WSSS():
             ################################################
         
             self.loss_cam_consistency = self.args.W[2]*(
-                ((_cam_diff.detach()-_cams)*self.label.view(B,C,1,1)).abs().mean()
-                # ((_cam_diff-_cams)*self.label.view(B,C,1,1)).abs().mean()
+                # ((_cam_diff.detach()-_cams)*self.label.view(B,C,1,1)).abs().mean()
+                ((_cam_diff-_cams)*self.label.view(B,C,1,1)).abs().mean()
             )
-            if epo>lfca_epoch:
-                loss_trm += self.loss_cam_consistency
+            # if epo>lfca_epoch:
+            loss_trm += self.loss_cam_consistency
         else:
             self.loss_cam_consistency = torch.Tensor([0])
 

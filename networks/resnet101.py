@@ -35,7 +35,7 @@ def ConvGn(in_chan, out_chan, ks, stride, pd, dilation=1, groups=1):
 def ConvGnReLU(in_chan, out_chan, ks, stride, pd, dilation=1, groups=1):
     return nn.Sequential(
         nn.Conv2d(in_chan, out_chan, ks, stride=stride, padding=pd, bias=False, groups=groups, dilation=dilation),
-        nn.GroupNorm(groups,out_chan,eps=1e-6), nn.ReLU(inplace=True))
+        nn.GroupNorm(groups,out_chan), nn.ReLU(inplace=True))
 
 def ConvLnReLU(in_chan, out_chan, ks, stride, pd, dilation=1, groups=1, relu=True):
     if relu:
