@@ -3,3 +3,6 @@ experiments
 __pycache__
 .idea
 .vscode
+train_dl.py
+train_dl_coco.py
+infer_dl.py

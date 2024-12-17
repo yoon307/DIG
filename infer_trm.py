@@ -54,8 +54,8 @@ if __name__ == '__main__':
     parser.add_argument('--data-set', default='VOC12', type=str, help='dataset')
     parser.add_argument('--data-path', default='./data/VOC2012', type=str, help='dataset')
     
-    parser.add_argument("--val_list", default="./voc12/train_aug.txt", type=str)
-    # parser.add_argument("--val_list", default="./voc12/train.txt", type=str)
+    # parser.add_argument("--val_list", default="./voc12/train_aug.txt", type=str)
+    parser.add_argument("--val_list", default="./voc12/train.txt", type=str)
     parser.add_argument("--num_workers", default=8, type=int)
     parser.add_argument("--batch_size", default=64, type=int)
 
@@ -78,7 +78,7 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", default=60, type=int)
 
     # Experiments
-    parser.add_argument("--model", default='trm_cnn', type=str)
+    parser.add_argument("--model", default='ECCV24_DiG', type=str)
     parser.add_argument("--name", required=True, type=str)
     parser.add_argument("--gpu", default=-1, type=int)
     # parser.add_argument("--seed", default=5123, type=int)

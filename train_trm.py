@@ -221,6 +221,15 @@ if __name__ == '__main__':
     max_step = train_num_img // args.batch_size * args.epochs
     args.max_step = max_step
 
+    src_file = "./models/model_"+args.model+".py"
+    des_file = "./experiments/"+args.name+"/copy_model.py"
+    shutil.copy(src_file,des_file)
+
+       
+    src_file = "./networks/mctformer.py"
+    des_file = "./experiments/"+args.name+"/copy_mctformer.py"
+    shutil.copy(src_file,des_file)
+
     model = getattr(importlib.import_module('models.model_'+args.model), 'model_WSSS')(args, logger)
     model.train_setup()
 

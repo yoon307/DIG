@@ -410,7 +410,8 @@ class Unet(nn.Module):
         
         x = self.mid_block1(x, t)
         x = self.mid_attn(x) + x
-        # out_feat.append(F.interpolate(x,size=(height//scale,width//scale),mode='bilinear',align_corners=False))
+        # out_feat.append(x)
+        # out_feat.append(F.interpolate(x,size=(height//scale,width//scale),mode='bilinear',align_corners=True))
         x = self.mid_block2(x, t)
 
         # out_feat.append(x)

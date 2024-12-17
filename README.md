@@ -4,7 +4,7 @@
 
 # 1.Prerequisite
 ## 1.1 Environment
-* Tested on Ubuntu 20.04, with Python 3.9, PyTorch 1.8.2, CUDA 11.7, multi gpus(two for pascal, four for coco) - Nvidia RTX 3090.
+* Tested on Ubuntu 20.04, with Python 3.9, PyTorch 1.8.2, CUDA 11.7, multi gpus(one for pascal, two for coco) - Nvidia RTX 3090.
 
 * You can create conda environment with the provided yaml file.
 ```
@@ -30,6 +30,9 @@ You need to specify place VOC2012 under ./data folder.
 
 * ImageNet-pretrained weights for ViT are from [deit_small_imagenet.pth](https://drive.google.com/drive/folders/1bjcjMXS8_Q0SvRkChp9gGeygpJm7wGr0?usp=sharing).  
 **You need to place the weights as "./pretrained/deit_small_imagenet.pth. "**
+* diffusion-pretrained weights are from [model-140-pascal.pth](https://drive.google.com/drive/folders/1bjcjMXS8_Q0SvRkChp9gGeygpJm7wGr0?usp=sharing).  
+**You need to place the weights as "./pretrained/model-140-pascal.ptht.pth. "**
+
 
 # 2. Usage
 
@@ -39,11 +42,11 @@ You need to specify place VOC2012 under ./data folder.
 
 For PASCAL:
 ```
-python train_trm.py --name [exp_name] --exp dig_eccv24
+CUDA_VISIBLE_DEVICES=0 python train_trm.py --name [exp_name] --exp dig_eccv24
 ```
 For COCO:
 ```
-python train_trm_coco.py --name [exp_name] --exp dig_coco_eccv24
+CUDA_VISIBLE_DEVICES=0,1 python train_trm_coco.py --name [exp_name] --exp dig_coco_eccv24
 ```
 
 **Note that the mIoU in COCO training set is evaluated on the subset (5.2k images, not the full set of 80k images) for fast evaluation**
@@ -53,13 +56,13 @@ python train_trm_coco.py --name [exp_name] --exp dig_coco_eccv24
 
 For pretrained model (69.3%):
 ```
-python infer_trm.py --name [exp_name] --load_pretrained [DIR_of_69.3%_ckpt] --load_epo 100 --dict
+CUDA_VISIBLE_DEVICES=0 python infer_trm.py --name [exp_name] --load_epo 19 --dict
 ```
 
 For model you trained:
 
 ```
-python infer_trm.py --name [exp_name] --load_epo [EPOCH] --dict
+CUDA_VISIBLE_DEVICES=0 python infer_trm.py --name [exp_name] --load_epo [EPOCH] --dict
 ```
 
 ## 2.3 Evaluation (CAM)

@@ -5,9 +5,8 @@ from networks.vision_transformer import VisionTransformer, _cfg, VisionTransform
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_
 import torch.nn.functional as F
-from networks.resnet38d import ResBlock, ResBlock_bot, ABF2
 from networks.vision_transformer import Block, PatchEmbed
-from networks.resnet101 import ResNet, ResBlock_ysh, ResBlock_ysh2
+from networks.resnet101 import  ResBlock_ysh
 from torch.cuda.amp import autocast
 
 import math
@@ -53,57 +52,8 @@ class Block_unet(nn.Module):
 
         x = self.act(x)
         return x
-    
-class DiffBlock_ysh(nn.Module):
-    def __init__(self, dim, dim_out, relu=True):
-        super().__init__()
 
-        self.conv1x1 = nn.Conv2d(dim,dim_out,1,bias=False)
-        self.conv3x3 = nn.Conv2d(dim,dim_out,3,1,1)
-        # self.conv5x5 = nn.Conv2d(dim,dim_out,5,1,2)
-
-        self.relu = relu
-
-        self.init_weight()
-
-    def forward(self, x):
-
-        x1 = self.conv1x1(x)
-        x3 = self.conv3x3(x)
-        # x5 = self.conv5x5(x)
-
-        # if self.idx == 0:
-        x = x1 + x3
-        # elif self.idx == 1:
-            # x = x1 + x5
-        # elif self.idx == 2:
-            # x = x1 + x3 + x5
-
-        if self.relu:
-            x = F.relu(x)
-    
-        return x
-    
-    def init_weight(self):
-        for m in self.children():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.GroupNorm):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-
-#Backup
-from timm.models.layers import DropPath
-
-from networks.resnet101 import Bottleneck
-class LFCA2(nn.Module):
+class LFCA(nn.Module):
     def __init__(self, D,D_f,C, **kwargs):
         super().__init__(**kwargs)
 
@@ -112,42 +62,35 @@ class LFCA2(nn.Module):
         self.C = C
 
         num_group = 1
+        eps = 1e-6
 
-        eps = 1e-5
-
-        self.diff_init = ResBlock_ysh(self.D_f*5,self.D_f)
+        self.diff_init = ResBlock_ysh(self.D_f*5,self.D_f,groups=num_group)
 
         self.norm_k = nn.LayerNorm(self.D,eps=eps)
         self.norm_v = nn.LayerNorm(self.D_f,eps=eps)
-        # self.norm_kv = nn.LayerNorm(self.D_f)
 
         self.norm_p1 = nn.GroupNorm(num_group,self.D_f,eps=eps)
         self.norm_c1 = nn.LayerNorm(self.D,eps=eps)
 
+        self.query =  nn.Linear(self.D,self.D)
         self.key =  nn.Conv2d(self.D_f,self.D,1,1,0)
-        self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0)
-        # self.value =  nn.Conv2d(self.D_f,self.D_f,3,1,1)
+        self.value =  nn.Conv2d(self.D_f,self.D_f,3,1,1)
 
         self.mlp_c0 = nn.Linear(self.D_f,self.D)
-        self.mlp_p0 = nn.Conv2d(self.D_f,self.D_f,3,1,1)
-        
+        self.mlp_p0 = nn.Conv2d(self.D_f,self.D_f,3,1,1) #best
+
         self.mlp_c1 = nn.Sequential(
             nn.Linear(self.D,self.D*4),
             nn.GELU(),
             nn.Linear(self.D*4,self.D),
             )
         self.mlp_p1 = nn.Sequential(
-            nn.Conv2d(self.D_f,self.D_f*4,3,1,1),
+            nn.Conv2d(self.D_f,self.D_f*4,1,1,0),
             nn.GELU(),
-            # nn.Dropout(0.1),
             nn.Conv2d(self.D_f*4,self.D_f,1,1,0),
-            # nn.Dropout(0.1)
             )
 
         self.drop_path = DropPath(0.1)
-        # self.drop_path = DropPath(0.)
-        self.attn_drop = nn.Dropout(0.1)
-        self.drop = nn.Dropout(0.1)
 
         self.init_weight()
         self._reset_parameters()
@@ -156,6 +99,7 @@ class LFCA2(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                # trunc_normal_(m.weight, std=.02)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
@@ -170,8 +114,10 @@ class LFCA2(nn.Module):
         # torch.manual_seed(0)
         nn.init.xavier_uniform_(self.key.weight)
         nn.init.xavier_uniform_(self.value.weight)
-        trunc_normal_(self.key.weight, std=.02)
-        trunc_normal_(self.value.weight, std=.02)
+        nn.init.constant_(self.key.bias, 0)
+        nn.init.constant_(self.value.bias, 0)
+        trunc_normal_(self.mlp_p1[0].weight, std=.02)
+        trunc_normal_(self.mlp_p1[2].weight, std=.02)
 
 
     
@@ -183,13 +129,11 @@ class LFCA2(nn.Module):
         h_trm, w_trm = int(N ** 0.5), int(N ** 0.5)
 
         kv = self.diff_init(feat_diff_cat) #B D_f H W
-        # _kv = self.norm_kv(kv.view(B,self.D_f,-1).permute(0,2,1)).permute(0,2,1).view(B,self.D_f,h_diff,w_diff) # B N D_f
 
+        query_vit = self.norm_k(self.query(query_vit))
         #Cross-attention
         key_diff = self.norm_k(self.key(kv).view(B,self.D,-1).permute(0,2,1)) #B D_f H' W' -> B N_f D
         value_diff = self.norm_v(self.value(kv).view(B,self.D_f,-1).permute(0,2,1)) #B D_f H' W' -> B N_f D_f
-        # key_diff = self.key(_kv).view(B,self.D,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
-        # value_diff = self.value(_kv).view(B,self.D_f,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
 
         query_vit = query_vit.view(query_vit.shape[0], query_vit.shape[1], 8, 384 // 8)
         key_diff = key_diff.view(key_diff.shape[0], key_diff.shape[1], 8, 384 // 8)
@@ -200,11 +144,8 @@ class LFCA2(nn.Module):
         value_diff = value_diff.permute(0, 2, 1, 3)
 
         cross_attn = torch.matmul(query_vit, key_diff.transpose(-2, -1)) / ((384//8) ** 0.5)
-        # cross_attn = torch.matmul(query_vit, key_diff.transpose(-2, -1)) / ((384) ** 0.5)
 
         cross_attn = F.softmax(cross_attn, dim=-1)
-        weight = cross_attn
-        # cross_attn = self.attn_drop(cross_attn)
         o = torch.matmul(cross_attn, value_diff)  # [batch_size, num_heads, query_len, head_dim]
    
         o = o.transpose(1,2).reshape(B,N+self.C,-1)
@@ -213,79 +154,19 @@ class LFCA2(nn.Module):
         o_p = o[:, self.C:, :].permute(0,2,1).reshape(B,self.D_f,h_trm,w_trm) # B N D_f -> B D_f H W
 
         o_c = self.mlp_c0(o_c)
-        x_c = o_c #+ query_vit_input[:,:self.C,:]
+        x_c = o_c + query_vit_input[:,:self.C,:]
         x_c = self.mlp_c1(self.norm_c1(x_c)) + x_c
 
-        # pdb.set_trace()
-        o_p = F.relu(self.mlp_p0(o_p),inplace=True)
+        o_p = self.mlp_p0(o_p)
         o_p = F.interpolate(o_p,size=(h_diff,w_diff),mode='bilinear',align_corners=False) #align False better
         
         x_p = kv + self.drop_path(o_p)
-        x_p = self.drop_path(F.relu(self.mlp_p1(self.norm_p1(x_p)),inplace=True)) + x_p
-        # x_p = self.drop_path(F.relu(self.mlp_p1(x_p),inplace=True)) + x_p
-        # print(x_p.max(),x_p.min())
+        x_p = self.drop_path(self.mlp_p1(self.norm_p1(x_p))) + x_p
 
         return x_c, x_p #, weight.sum(1)[:,:self.C,:].reshape(B,self.C,h_diff,w_diff)
-        # return x_c, x_p, weight[:,:self.C,:].reshape(B,self.C,h_diff,w_diff)
     
-class LFCA(nn.Module):
-    def __init__(self, D,D_f,C, **kwargs):
-        super().__init__(**kwargs)
-
-        self.D = D
-        self.D_f = D_f
-        self.C = C
-
-        self.diff_init = ResBlock_ysh(self.D_f*5,self.D_f)         # ReLU(2 ConvLNReLU + 1x1 Conv)
-        # self.diff_init = ResBlock_ysh(self.D_f,self.D_f)         # ReLU(2 ConvLNReLU + 1x1 Conv)
-        self.lnorm = nn.GroupNorm(1,self.D_f,eps=1e-5)
-        self.key =  nn.Conv2d(self.D_f,self.D,1,1,0) #nn.Conv2d(self.D_f,self.D,1,1,0,bias=False)
-        self.value =  nn.Conv2d(self.D_f,self.D_f,1,1,0) #nn.Conv2d(self.D_f,self.D_f,1,1,0,bias=False) #
-        self.diff_head0 = nn.Conv2d(self.D_f,self.D_f,3,1,1) # attn2-base
-        self.diff_head1 = nn.Conv2d(self.D_f,self.D_f,3,1,1)   # attn3-base
-
-
-        self.drop_path = DropPath(0)
-
-        nn.init.constant_(self.lnorm.weight, 1)
-        nn.init.constant_(self.lnorm.bias, 0)
-        nn.init.kaiming_normal_(self.key.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.constant_(self.key.bias, 0)
-        nn.init.kaiming_normal_(self.value.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.constant_(self.value.bias, 0)
-        nn.init.kaiming_normal_(self.diff_head0.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_normal_(self.diff_head1.weight, mode='fan_in', nonlinearity='relu')
-    
-    def forward(self, query_vit, feat_diff_cat):
-        
-        B,_,h_diff,w_diff = feat_diff_cat.size()
-        N = query_vit[:,self.C:,:].size(1)
-        h_trm, w_trm = int(N ** 0.5), int(N ** 0.5)
-
-        feat_diff = self.diff_init(feat_diff_cat)
-
-        feat_diff_ln = self.lnorm(feat_diff)
-
-        key_diff = self.key(feat_diff_ln).view(B,self.D,-1).permute(0,2,1) #B D_f H' W' -> B N_f D
-        value_diff = self.value(feat_diff_ln).view(B,self.D_f,-1).permute(0,2,1) #B D_f H' W' -> B N_f D_f
-
-        cross_attn = (query_vit @ key_diff.permute(0,2,1)) * ((self.D)**-0.5) #B C+N N_f
-
-        cross_attn = F.softmax(cross_attn,dim=-1) #B C+N N_f
-
-        out_cross = (cross_attn @ value_diff)   # B C+N D_f
-
-        out_cross_c = out_cross[:, :self.C, :]    # B C D_f
-        out_cross_p = out_cross[:, self.C:, :].permute(0,2,1).reshape(B,self.D_f,h_trm,w_trm) # B N D_f -> B D_f H W
-
-        out_cross_p = F.relu(self.diff_head0(out_cross_p),inplace=True)
-
-        out_cross_p = F.interpolate(out_cross_p,size=(h_diff,w_diff),mode='bilinear',align_corners=True)
-        out_cross_p = self.drop_path(out_cross_p) + feat_diff
-        out_cross_p = self.drop_path(F.relu(self.diff_head1(self.lnorm(out_cross_p)),inplace=True)) + out_cross_p
-
-
-        return out_cross_c, out_cross_p
+#Backup
+from timm.models.layers import DropPath
 
 class MCTformerV2_DiG(VisionTransformer):
     def __init__(self, *args, **kwargs):
@@ -299,25 +180,17 @@ class MCTformerV2_DiG(VisionTransformer):
 
         if True:
     
-            self.D_f = 512+256+128+64+64
+            self.D_f = 512+512#+256+128+64+64
             self.D = 384
             
-            self.LFCA0 = LFCA2(self.D,self.D_f,self.num_classes)
-            self.LFCA1 = LFCA2(self.D,self.D_f,self.num_classes)
-            # self.LFCA2 = LFCA2(self.D,self.D_f,self.num_classes)
-
-
-            self.diff_head_p = nn.Sequential(DiffBlock_ysh(self.D_f,self.D_f),nn.Conv2d(self.D_f,20,1,1,0))
-            # self.diff_head_p = nn.Sequential(nn.Conv2d(self.D_f*2,self.D_f*2,1,1,0,bias=False),nn.Conv2d(self.D_f*2,20,1,1,0,bias=False))
-            
-            # self.diff_head_c = nn.Linear(self.D,self.D)
-
+            self.LFCA0 = LFCA(self.D,self.D_f,self.num_classes)
+            self.LFCA1 = LFCA(self.D,self.D_f,self.num_classes)
+      
+            self.diff_head_p = nn.Sequential(nn.Conv2d(self.D_f,self.D_f,3,1,1),nn.ReLU(inplace=True),nn.Conv2d(self.D_f,20,1,1,0))
+      
         trunc_normal_(self.cls_token, std=.02)
         trunc_normal_(self.pos_embed, std=.02)
-        # prior_prob = 0.01
-        # bias_value = -math.log((1 - prior_prob) / prior_prob)
-        # self.diff_head_p[1].bias.data = torch.ones(self.num_classes) * bias_value
-        # nn.init.kaiming_normal_(self.diff_head_p[1].weight, mode='fan_in', nonlinearity='relu')
+ 
         print(self.training)
 
     def interpolate_pos_encoding(self, x, w, h):
@@ -407,23 +280,12 @@ class MCTformerV2_DiG(VisionTransformer):
             query0 = q_stacked[-1].permute(0,2,1,3).reshape(n,-1,384).detach() #B H N+C D//head -> B C+N D
             query1 = q_stacked[-2].permute(0,2,1,3).reshape(n,-1,384).detach() #B H N+C D//head -> B C+N D
      
-            # out_cross_c0, out_cross_p0 , cattn0 = self.LFCA0(query0,feat_diff_cat)
-            # out_cross_c1, out_cross_p1 , cattn1= self.LFCA1(query1,feat_diff_cat)
             out_cross_c0, out_cross_p0  = self.LFCA0(query0,feat_diff_cat)
             out_cross_c1, out_cross_p1 = self.LFCA1(query1,feat_diff_cat)
 
             out_cross_c = (out_cross_c0 + out_cross_c1)/2 #BEST
             out_cross_p = (out_cross_p0 + out_cross_p1)/2
-            # out_cross_p = torch.cat([out_cross_p0,out_cross_p1],dim=1)
-            # cattn = (cattn0+cattn1)/2
 
-            # out_cross_c = (out_cross_c0 + out_cross_c1 + out_cross_c2)/3 #BEST
-            # out_cross_p = (out_cross_p0 + out_cross_p1 + out_cross_p2)/3
-            
-            # out_cross_c = torch.cat([out_cross_c0,out_cross_c1],dim=1)
-            # out_cross_p = torch.cat([out_cross_p0,out_cross_p1],dim=1)
-     
-            # out_cross_c = self.diff_head_c(out_cross_c) #+ out_cross_c
             cam_diff = self.diff_head_p(out_cross_p)
 
             cam_diff_out = F.relu(cam_diff)
@@ -435,13 +297,12 @@ class MCTformerV2_DiG(VisionTransformer):
         
         x_patch = self.head(x_patch)
 
-        # x_patch_logits = self.avgpool(x_patch).squeeze(3).squeeze(2) ######ORIGINAL
         x_patch_logits = torch.topk(F.relu(x_patch).view(n,self.num_classes,-1),dim=-1,k=3)[0].mean(-1) - torch.topk(F.relu(-x_patch).view(n,self.num_classes,-1),dim=-1,k=3)[0].mean(-1)
 
         attn_weights = torch.stack(attn_weights)  # 12 * B * H * N * N
         attn_weights = torch.mean(attn_weights, dim=2)  # 12 * B * N * N
 
-        feature_map = x_patch#.detach().clone()  # B * C * 14 * 14
+        feature_map = x_patch
         feature_map = F.relu(feature_map)
 
         n, c, h, w = feature_map.shape
@@ -475,23 +336,16 @@ class MCTformerV2_DiG(VisionTransformer):
         outs['attn']= patch_attn
         outs['mtatt']= mtatt
         outs['rcams']= rcams
-        # outs['rcams_v1'] = rcams_v1
 
         outs['feat'] = feat_imd
 
 
         if feat_diff != None:
-            # outs['feat_diff'] = feat_diff_sum
-            # outs['cattn_diff'] = cattn
             outs['cam_diff'] = cam_diff_out
             outs['diff_cls'] = diff_cls_logits
             outs['diff_pcls'] = diff_patch_logits
-            # outs['cam_diff_cs'] = cam_diff_cs
-            # outs['pred_diff_cs'] = pred_diff_cs
         if return_att:
-            # return cam_diff_out
             return rcams
-            # return F.relu(x_patch)
         else:
             return outs
      

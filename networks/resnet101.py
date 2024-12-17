@@ -193,14 +193,14 @@ class ASPP(nn.Module):
                 m.bias.data.zero_()
 
 class ResBlock_ysh(nn.Module):
-    def __init__(self, in_chan, out_chan, stride=1, ks=3, dilation=1, relu = True):
+    def __init__(self, in_chan, out_chan, stride=1, groups=8, dilation=1, relu = True):
         super(ResBlock_ysh, self).__init__()
         if stride > 1:
             raise NotImplementedError("Stride > 1 not supported")
 
-        self.convbnrelu1 = ConvGnReLU(in_chan, out_chan, 3, stride=stride, pd=1)
+        self.convbnrelu1 = ConvGnReLU(in_chan, out_chan, 3, stride=stride, pd=1, groups=groups)
         # self.convbnrelu2 = ConvGnReLU(out_chan, out_chan, 3, stride=stride, pd=dilation, dilation=dilation)
-        self.convbn2 = ConvGn(out_chan, out_chan, 3, stride=stride, pd=dilation, dilation=dilation) #BEST
+        self.convbn2 = ConvGn(out_chan, out_chan, 3, stride=stride, pd=dilation, dilation=dilation,groups=groups) #BEST
 
         self.branch = nn.Conv2d(in_chan, out_chan, 1, 1, 0, bias=False)
         # self.branch = nn.Sequential(nn.Conv2d(in_chan, out_chan, 1, 1, 0, bias=False),nn.GroupNorm(1,out_chan))

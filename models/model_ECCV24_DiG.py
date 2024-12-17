@@ -40,10 +40,6 @@ from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler
 
-# import resnet38d
-# from networks import resnet38d, vgg16d
-# from networks import resnet101
-
 import sys
 sys.path.append("..") 
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
@@ -73,11 +69,6 @@ class RepulsionLoss(torch.nn.Module):
         repulsion_offsets = differences * repulsion_weights.unsqueeze(-1)
         loss = repulsion_offsets.sum(dim=-2).norm(p=2, dim=-1).mean()
         return loss
-
-##########
-# CUDA_VISIBLE_DEVICES=0,1 python train_trm.py --name diff --model diffusion_ECCV24_DiG 
-
-##########
 
 class model_WSSS():
 
@@ -146,7 +137,7 @@ class model_WSSS():
             sampling_timesteps = 150    # number of sampling timesteps (using ddim for faster inference [see citation for ddim paper])
         ).cuda().eval()
 
-        unet_state_dict = torch.load('/mnt/shyoon4tb/denoising-diffusion-pytorch/results/model-140-pascal.pt',map_location="cuda")
+        unet_state_dict = torch.load('./pretrained/model-140-pascal.pt',map_location="cuda")
         # unet_state_dict = torch.load('/mnt/shyoon4tb/denoising-diffusion-pytorch/results/model-100.pt',map_location="cuda")
         self.diffusion.load_state_dict(unet_state_dict['model'])
         self.diffusion.model.training = False
@@ -201,7 +192,7 @@ class model_WSSS():
             if args.finetune.startswith('https') and 'MCTformer' in args.trm:
                 cls_token_checkpoint = checkpoint_model['cls_token']
                 new_cls_token = cls_token_checkpoint.repeat(1,args.C,1)
-                
+            
                 checkpoint_model['cls_token'] = new_cls_token
 
             self.net_trm.load_state_dict(checkpoint_model, strict=False)
@@ -292,9 +283,6 @@ class model_WSSS():
         self.B = B
         self.C = C
 
-        # self.img_norm = F.interpolate(self.denormforDiff(self.img),size=(128,128),mode='bicubic',align_corners=True)
-        # self.img_norm = F.interpolate(self.denormforDiff(self.img),size=(192,192),mode='bicubic',align_corners=True)
-        # self.img_norm = F.interpolate(self.denormforDiff(self.img),size=(224,224),mode='bicubic',align_corners=True)
         self.img_norm = self.denormforDiff(self.img)
         
         self.img_norm = self.diffusion.normalize(self.img_norm) # -1 ~ +1
@@ -305,12 +293,7 @@ class model_WSSS():
         feat_diff_list = []
         if (self.args.W[1]>0 or self.args.W[2]>0) or self.args.W[3]>0:
             with torch.no_grad():
-                # for j in [200,210,220,230,240,60]:  # GPU 0/5
-                # for j in [0,10,20,30,40,60]: 
-                # for j in [0,10,20,30,40,60]: 
                 for j in [0,1,2,3,4,SFI]: 
-                # for j in [SFI]: 
-                # for j in [0,10,20,60]: 
                     slice = B
                     step_a = j
 
@@ -327,11 +310,7 @@ class model_WSSS():
                         img_diff = self.normforCls(img_out)
 
                     if j != SFI:
-                        # feat_diff0 = feat_diff[0] #512/512/256/128/64
-                        # feat_diff = feat_diff[1:]
-                        # feat_diff0 = torch.cat(feat_diff[:2],dim=1) #1024
                         feat_diff0 = torch.cat(feat_diff,dim=1) #1024
-                        # feat_diff0 = F.interpolate(feat_diff0,size= (H//16,W//16) , mode='bilinear',align_corners= True)
                         feat_diff_list.append(feat_diff0)
         else:        
             feat_diff_list = None
@@ -340,11 +319,6 @@ class model_WSSS():
         self.opt_trm.zero_grad()
         self.net_trm.train()
         
-        # feat_diff_list = None
-
-        # if epo<=lfca_epoch:
-        #     outputs = self.net_trm(self.img, feat_diff_list, detach=True)
-        # else:    
         outputs = self.net_trm(self.img, feat_diff_list, detach=True)
 
         self.out = outputs['cls']
@@ -356,20 +330,13 @@ class model_WSSS():
 
         self.feat = outputs['feat']
         if feat_diff_list is not None:
-            # self.cattn_diff = outputs['cattn_diff']
             self.cam_diff = outputs['cam_diff']
             self.diff_cls = outputs['diff_cls']
             self.diff_pcls = outputs['diff_pcls']           # B C
 
-        # outputs_aug = self.net_trm(self.img_diff)
-        # self.out_aug = outputs_aug['cls']
-        # self.out_patch_aug = outputs_aug['pcls']
-
         self.loss_cls = self.args.W[0]*(
             F.multilabel_soft_margin_loss(self.out,self.label)
             + F.multilabel_soft_margin_loss(self.out_patch,self.label)
-            # + F.multilabel_soft_margin_loss(self.out_aug,self.label)
-            # + F.multilabel_soft_margin_loss(self.out_patch_aug,self.label)
             )
         loss_trm = self.loss_cls 
 
@@ -387,11 +354,6 @@ class model_WSSS():
             T_pred_patch_cat = torch.log(torch.cat((T_pred_patch, 1 - T_pred_patch), dim=1))
             T_pred_ctk_cat = torch.log(torch.cat((T_pred_ctk, 1 - T_pred_ctk), dim=1))
             
-            # S_pred_patch_cat = torch.log_softmax(torch.cat((S_pred_patch, 1 - S_pred_patch), dim=1),dim=1)
-            # S_pred_ctk_cat = torch.log_softmax(torch.cat((S_pred_ctk, 1 - S_pred_ctk), dim=1),dim=1)
-            # T_pred_patch_cat = torch.log_softmax(torch.cat((T_pred_patch, 1 - T_pred_patch), dim=1),dim=1)
-            # T_pred_ctk_cat = torch.log_softmax(torch.cat((T_pred_ctk, 1 - T_pred_ctk), dim=1),dim=1)
-
             self.loss_pred_diff = self.args.W[1]*(
                 alpha * F.multilabel_soft_margin_loss(self.diff_cls,self.label)
                 + alpha * F.multilabel_soft_margin_loss(self.diff_pcls,self.label)     # original
@@ -406,15 +368,12 @@ class model_WSSS():
             _cams = self.max_norm(F.interpolate(cams,size=self.cam_diff.size()[2:],mode='bilinear',align_corners=False))
             
             _cam_diff = self.max_norm(self.cam_diff)*self.label.view(B,C,1,1)
-            # _cam_diff = (self.max_norm(self.cam_diff*self.cattn_diff))*self.label.view(B,C,1,1)
 
             ###############################################
             if True:
                 input = denorm(self.img[0]).permute(1,2,0)
                 cam_diff = F.interpolate(self.cam_diff,size=(H,W),mode='bilinear',align_corners=False)*self.label.view(B,C,1,1)
-                # cattn_diff = F.interpolate(self.cattn_diff,size=(H,W),mode='bilinear',align_corners=False)*self.label.view(B,C,1,1)
                 norm_cam = self.max_norm(cam_diff)
-                # norm_cam = self.max_norm(cattn_diff)
 
                 gt = self.label[0].cpu().detach().numpy()
                 self.gt_cls = np.nonzero(gt)[0]
@@ -427,10 +386,8 @@ class model_WSSS():
             ################################################
         
             self.loss_cam_consistency = self.args.W[2]*(
-                # ((_cam_diff.detach()-_cams)*self.label.view(B,C,1,1)).abs().mean()
-                ((_cam_diff-_cams)*self.label.view(B,C,1,1)).abs().mean()
+                ((_cam_diff.detach()-_cams)*self.label.view(B,C,1,1)).abs().mean()
             )
-            # if epo>lfca_epoch:
             loss_trm += self.loss_cam_consistency
         else:
             self.loss_cam_consistency = torch.Tensor([0])
@@ -492,7 +449,6 @@ class model_WSSS():
     def infer_init(self,epo):
         n_gpus = torch.cuda.device_count()
         self.net_trm.eval()
-        # self.net_trm_replicas = torch.nn.parallel.replicate(self.net_trm.module, list(range(n_gpus)))
 
     # (Multi-Thread) Infer MSF-CAM and save image/cam_dict/crf_dict
     def infer_multi(self, epo, val_path, dict_path, crf_path, vis=False, dict=False, crf=False):
@@ -527,11 +483,6 @@ class model_WSSS():
                 self.cam_dict[i] = norm_cam[i]
 
         if vis:
-            # img_np = denorm(self.img[0]).cpu().detach().data.permute(1, 2, 0).numpy()
-            # for c in self.gt_cls:
-            #     save_img(osp.join(val_path, epo_str + '_' + self.name + '_cam_' + self.categories[c] + '.png'), img_np,
-            #              norm_cam[c])
-            
             input = denorm(self.img[0])
             for c in self.gt_cls:
                 temp = cam_on_image(input.cpu().detach().numpy(), norm_cam[c])
